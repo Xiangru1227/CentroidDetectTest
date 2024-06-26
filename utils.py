@@ -1,6 +1,6 @@
-import math
 import os
 import cv2
+import math
 import imutils
 import numpy as np
 
@@ -30,7 +30,7 @@ def YUV2BGR(root_path, sequence):
     yuv_img = cv2.merge([imgY, imgU, imgV])
     bgr_img = cv2.cvtColor(yuv_img, cv2.COLOR_YUV2BGR)
     
-    bgr_img = filter_red_color(bgr_img)
+    bgr_img = filter_red(bgr_img)
     
     return bgr_img
         
@@ -44,34 +44,33 @@ def color_detection(img, hsv_min, hsv_max, draw=False):
     contours = imutils.grab_contours(contours)
     
     centroids_and_areas = []
-    selected_contours = []
-    hsv_values = []
+    filtered_contours = []
     
     for c in contours:
         # Compute the center of the contour
         M = cv2.moments(c)
         # filter out noises
-        if M["m00"] > 50:
+        if M["m00"] > 50 and 0.7 <= circularity(c) <= 1.0:
             cX = M["m10"] / M["m00"]
             cY = M["m01"] / M["m00"]
             
+            filtered_contours.append(c)
             area = cv2.contourArea(c)
             centroids_and_areas.append((np.array([cX, cY]), area))
-            selected_contours.append(c)
             
     centroids_and_areas.sort(key=lambda x: x[0][1])
     centroids = [i[0] for i in centroids_and_areas]
     areas = [i[1] for i in centroids_and_areas]
 
     if draw:
-        cv2.drawContours(img, selected_contours, -1, (0, 0, 255), thickness=2)
+        cv2.drawContours(img, filtered_contours, -1, (0, 0, 255), thickness=2)
         keypoints = [cv2.KeyPoint(x=pt[0], y=pt[1], size=10) for pt in centroids]
         img = cv2.drawKeypoints(img, keypoints, None, color=(0, 0, 255))
         return centroids, areas, img
     else:
         return centroids, areas, None
     
-def filter_red_color(img):
+def filter_red(img):
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     lower_red1 = np.array([0, 50, 50])
@@ -86,8 +85,15 @@ def filter_red_color(img):
     filtered_img = cv2.bitwise_and(img, img, mask=cv2.bitwise_not(mask))
     return filtered_img
     
+def circularity(contour):
+    area = cv2.contourArea(contour)
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter == 0:
+        return 0
+    circularity = 4 * np.pi * (area / (perimeter * perimeter))
+    return circularity
+    
 def iPb_uv2pyr(keypoints, prm:Prm):
-    # initialize the list of pitch, yaw and roll
     pyrs = [0.0, 0.0, 0.0, 0.0]
     
     # compute (u1,v1) and (u2,v2), coordinates of P1 and P2 in P3 frame
@@ -98,15 +104,13 @@ def iPb_uv2pyr(keypoints, prm:Prm):
 
     # compute roll for general cases (in degree)
     roll = (math.atan2((u1 - u2), (v1 - v2))) * 180 / np.pi
+    sr = math.sin(roll * np.pi / 180)
+    cr = math.cos(roll * np.pi / 180)
 
-    # cos(pitch) = m * scale
     m = math.sqrt(((u1 - u2) ** 2 + (v1 - v2) ** 2) / (prm.H1 - prm.H2) ** 2)
-    # sin(yaw) = n * scale
-    n = (math.sin(roll * np.pi / 180) * v1 - math.cos(roll * np.pi / 180) * u1) / prm.D
-    # sin(pitch) * cos(yaw) = k * scale
-    k = (u1 * math.sin(roll * np.pi / 180) + v1 * math.cos(roll * np.pi / 180) - prm.H1 * m) / prm.D
+    n = (sr * v1 - cr * u1) / prm.D
+    k = (sr * u1 + cr * v1 - prm.H1 * m) / prm.D
 
-    # compute scale
     if abs(n) > 0.00001:
         temp1 = m ** 2 + n ** 2 + k ** 2
         temp2 = m ** 2 * n ** 2
@@ -116,7 +120,7 @@ def iPb_uv2pyr(keypoints, prm:Prm):
     else:
         scale = 1 / math.sqrt(m ** 2 + k ** 2)
 
-    # compute pitch and yaw
+    # compute pitch and yaw (in degree)
     yaw = (math.asin(n * scale)) * 180 / np.pi
     pitch = (math.asin(k * scale / math.cos((yaw / 180) * np.pi))) * 180 / np.pi
 
@@ -127,10 +131,10 @@ def iPb_uv2pyr(keypoints, prm:Prm):
     
     return pyrs
 
-def show_image(img, name):
+def show_image(img, name, size, position):
     cv2.namedWindow(name, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(name, 800, 600)
-    cv2.moveWindow(name, 500, 100)
+    cv2.resizeWindow(name, size[0], size[1])
+    cv2.moveWindow(name, position[0], position[1])
     cv2.imshow(name, img)
     cv2.waitKey(0)
 

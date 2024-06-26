@@ -11,7 +11,7 @@ def main():
     hsv_max = (100, 255, 255)
     
     # Modify this to input different datasets
-    root_path = '6.24/5m'
+    root_path = '6.26/5m'
     
     list_of_centroids = [[] for _ in range(3)]
     list_of_area = [[] for _ in range(3)]
@@ -21,7 +21,7 @@ def main():
     os.makedirs(img_output_path, exist_ok=True)
     cnt_output_path = os.path.join(root_path, 'cnt_output.txt')
     
-    for i in range(1, 11):
+    for i in range(1, 4):
         bgr_img = YUV2BGR(root_path, str(i))
     
         centroids, areas, img_contoured = color_detection(bgr_img, hsv_min, hsv_max, draw=_draw)
