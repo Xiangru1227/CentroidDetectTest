@@ -1,6 +1,7 @@
 import os
 import cv2
 import math
+import json
 import imutils
 import numpy as np
 
@@ -30,14 +31,14 @@ def YUV2BGR(root_path, sequence):
     yuv_img = cv2.merge([imgY, imgU, imgV])
     bgr_img = cv2.cvtColor(yuv_img, cv2.COLOR_YUV2BGR)
     
-    bgr_img = filter_red(bgr_img)
+    # bgr_img = filter_red(bgr_img)
     
     return bgr_img
         
-def color_detection(img, hsv_min, hsv_max, draw=False):
+def color_detection(img, hsv_min, hsv_max, ref_coord, draw=False):
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv_img, hsv_min, hsv_max)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5),np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5), np.uint8))
 
     # Find contours in the mask
     contours = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -57,26 +58,68 @@ def color_detection(img, hsv_min, hsv_max, draw=False):
             filtered_contours.append(c)
             area = cv2.contourArea(c)
             centroids_and_areas.append((np.array([cX, cY]), area))
-            
-    centroids_and_areas.sort(key=lambda x: x[0][1])
-    centroids = [i[0] for i in centroids_and_areas]
-    areas = [i[1] for i in centroids_and_areas]
 
-    if draw:
-        cv2.drawContours(img, filtered_contours, -1, (0, 0, 255), thickness=2)
-        keypoints = [cv2.KeyPoint(x=pt[0], y=pt[1], size=10) for pt in centroids]
-        img = cv2.drawKeypoints(img, keypoints, None, color=(0, 0, 255))
-        return centroids, areas, img
+    if len(centroids_and_areas) == 3:
+        centroids_and_areas.sort(key=lambda x: np.linalg.norm(x[0] - ref_coord), reverse=True)
+        centroids = [i[0] for i in centroids_and_areas]
+        areas = [i[1] for i in centroids_and_areas]
+
+        if draw:
+            cv2.drawContours(img, filtered_contours, -1, (0, 0, 255), thickness=2)
+            keypoints = [cv2.KeyPoint(x=pt[0], y=pt[1], size=10) for pt in centroids]
+            img = cv2.drawKeypoints(img, keypoints, None, color=(0, 0, 255))
+            return centroids, areas, img
+        else:
+            return centroids, areas, None
+        
+    elif len(centroids) > 3:
+        raise ValueError("Image is noisy, adjust filtering thresholds.")
     else:
-        return centroids, areas, None
+        raise ValueError("Detected probe is incomplete, move closer or adjust pose.")
     
+def find_red_areas(img, draw=False):
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    
+    mask1 = cv2.inRange(hsv_img, (0, 120, 70), (10, 255, 255))
+    mask2 = cv2.inRange(hsv_img, (170, 120, 70), (180, 255, 255))
+    mask = cv2.bitwise_or(mask1, mask2)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    
+    contours = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = imutils.grab_contours(contours)
+    
+    centroids = []
+    selected_contours = []
+    
+    for c in contours:
+        M = cv2.moments(c)
+        if M["m00"] > 500:
+            cX = int(M["m10"] / M["m00"])
+            cY = int(M["m01"] / M["m00"])
+            centroids.append(np.array([cX, cY]))
+            selected_contours.append(c)
+    
+    if len(centroids) == 1:
+        if draw:
+            cv2.drawContours(img, selected_contours, -1, (255, 0, 0), thickness=2)
+            for centroid in centroids:
+                cv2.circle(img, (centroid[0], centroid[1]), 5, (255, 0, 0), -1)
+            return centroids[0], img
+        else: 
+            return centroids[0]
+    elif len(centroids) == 0:
+        raise ValueError("No SMR detected.")
+    else:
+        raise ValueError("More than 1 SMR detected.")
+
 def filter_red(img):
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     lower_red1 = np.array([0, 50, 50])
-    upper_red1 = np.array([10, 255, 255])
-    lower_red2 = np.array([170, 50, 50])
-    upper_red2 = np.array([180, 255, 255])
+    upper_red1 = np.array([30, 255, 255])
+    lower_red2 = np.array([160, 50, 50])
+    upper_red2 = np.array([190, 255, 255])
 
     mask1 = cv2.inRange(hsv_img, lower_red1, upper_red1)
     mask2 = cv2.inRange(hsv_img, lower_red2, upper_red2)
@@ -153,3 +196,26 @@ def visualize_hsv_range(hsv_min, hsv_max):
 
     cv2.imshow('HSV Visualization', bgr_gradient)
     cv2.waitKey(0)
+    
+def find_dist2XY(distance, json_file_path):
+    with open(json_file_path) as f:
+        data = json.load(f)
+    
+    d = np.array(data["Parallax"]["Distance"])
+    x = np.array(data["Parallax"]["X"])
+    y = np.array(data["Parallax"]["Y"])
+    
+    idx_1 = np.max(np.where(d <= distance))
+    idx_2 = np.min(np.where(d >= distance))
+
+    if idx_1 == idx_2:
+        return [x[idx_1], y[idx_1]]
+    else:
+        d1, d2 = d[idx_1], d[idx_2]
+        x1, x2 = x[idx_1], x[idx_2]
+        y1, y2 = y[idx_1], y[idx_2]
+
+        x_pred = (x2 - x1) * (distance - d1) / (d2 - d1) + x1
+        y_pred = (y2 - y1) * (distance - d1) / (d2 - d1) + y1
+
+        return [x_pred, y_pred]
