@@ -35,7 +35,7 @@ def YUV2BGR(root_path, sequence):
     
     return bgr_img
         
-def color_detection(img, hsv_min, hsv_max, ref_coord, draw=False):
+def color_detection(img, hsv_min, hsv_max, ref_coord, size_ts, draw=False):
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv_img, hsv_min, hsv_max)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5,5), np.uint8))
@@ -51,7 +51,7 @@ def color_detection(img, hsv_min, hsv_max, ref_coord, draw=False):
         # Compute the center of the contour
         M = cv2.moments(c)
         # filter out noises
-        if M["m00"] > 50 and 0.7 <= circularity(c) <= 1.0:
+        if M["m00"] > size_ts and 0.7 <= circularity(c) <= 1.0:
             cX = M["m10"] / M["m00"]
             cY = M["m01"] / M["m00"]
             
@@ -59,23 +59,23 @@ def color_detection(img, hsv_min, hsv_max, ref_coord, draw=False):
             area = cv2.contourArea(c)
             centroids_and_areas.append((np.array([cX, cY]), area))
 
-    if len(centroids_and_areas) == 3:
-        centroids_and_areas.sort(key=lambda x: np.linalg.norm(x[0] - ref_coord), reverse=True)
-        centroids = [i[0] for i in centroids_and_areas]
-        areas = [i[1] for i in centroids_and_areas]
+    # if len(centroids_and_areas) == 3:
+    centroids_and_areas.sort(key=lambda x: np.linalg.norm(x[0] - ref_coord), reverse=True)
+    centroids = [i[0] for i in centroids_and_areas]
+    areas = [i[1] for i in centroids_and_areas]
 
-        if draw:
-            cv2.drawContours(img, filtered_contours, -1, (0, 0, 255), thickness=2)
-            keypoints = [cv2.KeyPoint(x=pt[0], y=pt[1], size=10) for pt in centroids]
-            img = cv2.drawKeypoints(img, keypoints, None, color=(0, 0, 255))
-            return centroids, areas, img
-        else:
-            return centroids, areas, None
-        
-    elif len(centroids) > 3:
-        raise ValueError("Image is noisy, adjust filtering thresholds.")
+    if draw:
+        cv2.drawContours(img, filtered_contours, -1, (0, 0, 255), thickness=2)
+        keypoints = [cv2.KeyPoint(x=pt[0], y=pt[1], size=10) for pt in centroids]
+        img = cv2.drawKeypoints(img, keypoints, None, color=(0, 0, 255))
+        return centroids, areas, img
     else:
-        raise ValueError("Detected probe is incomplete, move closer or adjust pose.")
+        return centroids, areas, None
+        
+    # elif len(centroids_and_areas) > 3:
+    #     raise ValueError("Image is noisy, adjust filtering thresholds.")
+    # else:
+    #     raise ValueError("Detected probe is incomplete, move closer or adjust pose.")
     
 def find_red_areas(img, draw=False):
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -197,7 +197,7 @@ def visualize_hsv_range(hsv_min, hsv_max):
     cv2.imshow('HSV Visualization', bgr_gradient)
     cv2.waitKey(0)
     
-def find_dist2XY(distance, json_file_path):
+def dist2SMR_coord(distance, json_file_path):
     with open(json_file_path) as f:
         data = json.load(f)
     
@@ -219,3 +219,36 @@ def find_dist2XY(distance, json_file_path):
         y_pred = (y2 - y1) * (distance - d1) / (d2 - d1) + y1
 
         return [x_pred, y_pred]
+    
+def dist2ROI_size(distance, json_file_path):
+    with open(json_file_path) as f:
+        data = json.load(f)
+    
+    distances = np.array(data["Distance"])
+    roi_sizes = np.array(data["ROI_size"])
+    led_sizes = np.array(data["LED_size"])
+    
+    if distance < distances.min() or distance > distances.max():
+        raise ValueError("Distance is out of the range.")
+    
+    idx_1 = np.max(np.where(distances <= distance))
+    idx_2 = np.min(np.where(distances >= distance))
+    
+    if idx_1 == idx_2:
+        return roi_sizes[idx_1], led_sizes[idx_1]
+    else:
+        d1, d2 = distance[idx_1], distance[idx_2]
+        roi1, roi2 = roi_sizes[idx_1], roi_sizes[idx_2]
+        led1, led2 = led_sizes[idx_1], led_sizes[idx_2]
+
+        return (roi2 - roi1) * (distance - d1) / (d2 - d1) + roi1, (led2 - led1) * (distance - d1) / (d2 - d1) + led1
+    
+def crop_image(img, center, length):
+    x_start = max(int(center[0] - length), 0)
+    y_start = max(int(center[1] - length), 0)
+    x_end = min(int(center[0] + length), img.shape[1])
+    y_end = min(int(center[1] + length), img.shape[0])
+
+    cropped_img = img[y_start:y_end, x_start:x_end]
+
+    return filter_red(cropped_img)
