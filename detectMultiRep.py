@@ -1,4 +1,4 @@
-from utils import *
+from detectUtils import *
 
 def main():
     D = 63.5

@@ -1,6 +1,7 @@
 import os
 import math
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 
 class Prm:
@@ -200,7 +201,7 @@ def process_file_robot(i, iprobeParam, solidCubePrm, folder):
     tip1_pos = np.array([float(x) for x in lines[3].split()])
     tip2_pos = np.array([float(x) for x in lines[4].split()])
     tip3_pos = np.array([float(x) for x in lines[5].split()])
-    '''1 is top-left, 2 is top-right, 3 is bottom left'''
+    '''1 is top-left, 2 is top-right, 3 is bottom right'''
     
     # tip_offset_in_ft = tip_pos - smr_pos
     tracker_angle = trackerAngle(tracker_az, tracker_el)
@@ -217,23 +218,81 @@ def getError_robot(iprobeParam, solidCubePrm, mode, idx, folder):
         tipOffset2_fp_list.append(tipOffset2)
         tipOffset3_fp_list.append(tipOffset3)
     
-    offset1_x_std = np.std([offset[0] for offset in tipOffset1_fp_list])
-    offset1_y_std = np.std([offset[1] for offset in tipOffset1_fp_list])
-    offset1_z_std = np.std([offset[2] for offset in tipOffset1_fp_list])
+    # for tip in tipOffset1_fp_list:
+    #     print(f"[{tip[0]:.4f},\t{tip[1]:.4f},\t{tip[2]:.4f}]")
+    # tip_offset_avg = np.mean(tipOffset1_fp_list, axis=0)
+    # print(f"Average tip offset: [{tip_offset_avg[0]:.4f},\t{tip_offset_avg[1]:.4f},\t{tip_offset_avg[2]:.4f}]\n")
     
-    offset2_x_std = np.std([offset[0] for offset in tipOffset2_fp_list])
-    offset2_y_std = np.std([offset[1] for offset in tipOffset2_fp_list])
-    offset2_z_std = np.std([offset[2] for offset in tipOffset2_fp_list])
+    # for tip in tipOffset2_fp_list:
+    #     print(f"[{tip[0]:.4f},\t{tip[1]:.4f},\t{tip[2]:.4f}]")
+    # tip_offset_avg = np.mean(tipOffset2_fp_list, axis=0)
+    # print(f"Average tip offset: [{tip_offset_avg[0]:.4f},\t{tip_offset_avg[1]:.4f},\t{tip_offset_avg[2]:.4f}]\n")
     
-    offset3_x_std = np.std([offset[0] for offset in tipOffset3_fp_list])
-    offset3_y_std = np.std([offset[1] for offset in tipOffset3_fp_list])
-    offset3_z_std = np.std([offset[2] for offset in tipOffset3_fp_list])
+    # for tip in tipOffset3_fp_list:
+    #     print(f"[{tip[0]:.4f},\t{tip[1]:.4f},\t{tip[2]:.4f}]")
+    # tip_offset_avg = np.mean(tipOffset3_fp_list, axis=0)
+    # print(f"Average tip offset: [{tip_offset_avg[0]:.4f},\t{tip_offset_avg[1]:.4f},\t{tip_offset_avg[2]:.4f}]\n")
+    
+    offset1_std = np.std(tipOffset1_fp_list, axis=0)
+    offset2_std = np.std(tipOffset2_fp_list, axis=0)
+    offset3_std = np.std(tipOffset3_fp_list, axis=0)
     
     if mode == 'scalar':
-        return offset1_x_std ** 2 + offset1_y_std ** 2 + offset1_z_std ** 2 + offset2_x_std ** 2 + offset2_y_std ** 2 + offset2_z_std ** 2 + offset3_x_std ** 2 + offset3_y_std ** 2 + offset3_z_std ** 2
+        return np.sqrt(np.sum(offset1_std ** 2 + offset2_std ** 2 + offset3_std ** 2))
     elif mode == 'vector':
-        return np.array([offset1_x_std + offset2_x_std + offset3_x_std, 
-                         offset1_y_std + offset2_y_std + offset3_y_std, 
-                         offset1_x_std + offset2_z_std + offset3_z_std])
+        return np.concatenate([offset1_std, offset2_std, offset3_std])
     else:
         raise ValueError("Invalid mode.")
+
+def getDiff_robot(iprobeParam, solidCubePrm, idx, folder):
+    tipOffset1_fp_list = []
+    tipOffset2_fp_list = []
+    tipOffset3_fp_list = []
+    pyr_list = []
+    
+    for i in range(idx):
+        tipOffset1, tipOffset2, tipOffset3 = process_file_robot(i, iprobeParam, solidCubePrm, folder)
+        centroids = np.loadtxt(os.path.join(folder, f"{i+1}.txt"), skiprows=2, max_rows=1).reshape(4, 2)  # 读取 `centroids`
+        pyr = iprobeParam.getPYR(centroids)
+
+        tipOffset1_fp_list.append(tipOffset1)
+        tipOffset2_fp_list.append(tipOffset2)
+        tipOffset3_fp_list.append(tipOffset3)
+        pyr_list.append([pyr.pitch, pyr.yaw, pyr.roll])
+    
+    tipRef1 = tipOffset1_fp_list[0]
+    tipRef2 = tipOffset2_fp_list[0]
+    tipRef3 = tipOffset3_fp_list[0]
+    
+    tipDiff1 = np.linalg.norm(np.array(tipOffset1_fp_list) - tipRef1, axis=1)
+    tipDiff2 = np.linalg.norm(np.array(tipOffset2_fp_list) - tipRef2, axis=1)
+    tipDiff3 = np.linalg.norm(np.array(tipOffset3_fp_list) - tipRef3, axis=1)
+
+    pyr_array = np.array(pyr_list)
+
+    labels = ['Pitch (°)', 'Yaw (°)', 'Roll (°)']
+    tip_labels = ['Tip 1', 'Tip 2', 'Tip 3']
+    
+    fig, axes = plt.subplots(3, 3, figsize=(12, 9))
+    
+    roll_indices = np.arange(1, 6)
+    yaw_indices = np.arange(6, 12)
+    pitch_indices = np.arange(12, 18)
+    for tip_idx, tipDiff in enumerate([tipDiff1, tipDiff2, tipDiff3]):
+        for pyr_idx, indices in enumerate([pitch_indices, yaw_indices, roll_indices]):
+            ax = axes[tip_idx, pyr_idx]
+            ax.scatter(pyr_array[indices, pyr_idx], tipDiff[indices], alpha=0.7)
+            ax.set_xlabel(labels[pyr_idx])
+            ax.set_ylabel("Offset Difference (mm)")
+            ax.set_title(f"{tip_labels[tip_idx]} vs {labels[pyr_idx]} (Group {indices[0]+1}-{indices[-1]+1})")
+    
+    # for tip_idx, tipDiff in enumerate([tipDiff1, tipDiff2, tipDiff3]):
+    #     for pyr_idx in range(3):
+    #         ax = axes[tip_idx, pyr_idx]
+    #         ax.scatter(pyr_array[:, pyr_idx], tipDiff, alpha=0.7)
+    #         ax.set_xlabel(labels[pyr_idx])
+    #         ax.set_ylabel("Offset Difference (mm)")
+    #         ax.set_title(f"{tip_labels[tip_idx]} vs {labels[pyr_idx]}")
+    
+    plt.tight_layout()
+    plt.show()

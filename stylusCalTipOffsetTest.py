@@ -1,6 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-from cal_utils import *
+from calUtils import *
 
 def test(probeRef, probeData, tipData, iprobePrm, solidCubePrm):
     tipAvg = tipData.iloc[-1]
